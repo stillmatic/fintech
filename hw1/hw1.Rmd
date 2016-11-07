@@ -1,0 +1,61 @@
+---
+title: "Credit Modelling"
+author: "Chris Hua"
+date: "11/7/2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(dplyr)
+library(magrittr)
+library(broom)
+library(ggplot2)
+insample <- read.csv("File1_IS_data.csv")
+insample %>% select(default) %>% table
+```
+
+# Notes
+
+Chris Hua, Kevin Huo, Arjun Jain, Juan Manubens
+
+# Basic Modelling
+
+We model "default probability" with respect to "FICO" score only. First, we note the distribution of the outcome variable:
+
+```{r}
+insample %>% select(default) %>% table
+```
+
+As well as the distribution of the FICO score, among applicants in this dataset:
+
+```{r}
+insample %>%
+    ggplot(aes(fico)) + geom_histogram() + 
+    theme_classic() + 
+    ggtitle("")
+```
+
+
+**a.** We expect a negative coefficient on FICO. Intuitively, a customer is less likely to default the better their credit score is. We would also expect a positive intercept, because for a customer with 0 credit score (the condition for the intercept), they have terrible chances of paying off the bill, and thus high chance for default
+
+**b.** We estimate our model using `glm` approach with a binomial prior.
+
+```{r}
+insample %<>%
+    mutate(default = default == "Defaulted")
+
+log_fit <- glm(default ~ fico, data = insample, family = "binomial")
+log_fit %>% tidy %>% knitr::kable(digits = 2)
+```
+
+By p-value, `fico` is a statistically significant value at better than at 0.01 level, indicating that by itself, `fico` is a useful predictor for default outcomes.
+
+The intercept is strongly positive, which indicates that default is very likely for somebody with a `fico` score of 0. Alternatively, the intercept suggests that somebody with a score of 768 has 0 chance of default. The positive coefficient means that for each point of FICO score, the likelihood of a negative outcome decreases by 0.01. Each of these observations lines up with our intuitions.
+
+# Model Evaluation
+
+```{r}
+predict(log_fit, insample) %>% sort %>% plot
+```
+
