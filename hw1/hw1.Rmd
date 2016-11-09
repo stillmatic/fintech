@@ -1,49 +1,53 @@
 ---
 title: "Credit Modelling"
-author: "Chris Hua"
+author: 
+  - "Chris Hua"
+  - "Kevin Huo"
+  - "Arjun Jain"
+  - "Juan Manubens"
 date: "11/7/2016"
 output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(echo = FALSE, fig.height = 5, fig.width = 8)
 library(dplyr)
+library(knitr)
 library(magrittr)
 library(broom)
 library(ggplot2)
+library(pROC)
+library(tidyr)
 insample <- read.csv("File1_IS_data.csv")
-insample %>% select(default) %>% table
 ```
 
-# Notes
-
-Chris Hua, Kevin Huo, Arjun Jain, Juan Manubens
+forgive me
 
 # Basic Modelling
 
 We model "default probability" with respect to "FICO" score only. First, we note the distribution of the outcome variable:
 
-```{r}
-insample %>% select(default) %>% table
+```{r, comment=""}
+insample %>% 
+    select(default) %>% table()
 ```
 
-As well as the distribution of the FICO score, among applicants in this dataset:
+As well as the distribution of the FICO score, among applicants in this dataset. This is a pretty heavily left-skewed distribution, which probably represents the fact that the people who try to get loans on Lending Club are people who can't get loans traditionally.
 
 ```{r}
 insample %>%
-    ggplot(aes(fico)) + geom_histogram() + 
+    ggplot(aes(fico)) + geom_histogram(bins = 35) + 
     theme_classic() + 
-    ggtitle("")
+    ggtitle("") + xlab("FICO Score")
 ```
 
+**a.** We expect a negative coefficient on FICO. Intuitively, a customer is less likely to default the better their credit score is. We would also expect a positive intercept, because for a customer with 0 credit score (the condition for the intercept), they have terrible chances of paying off the bill, and thus high chance for default.
 
-**a.** We expect a negative coefficient on FICO. Intuitively, a customer is less likely to default the better their credit score is. We would also expect a positive intercept, because for a customer with 0 credit score (the condition for the intercept), they have terrible chances of paying off the bill, and thus high chance for default
-
-**b.** We estimate our model using `glm` approach with a binomial prior.
+**b.** We estimate our model using `glm` approach with a binomial prior. Summary statistics:
 
 ```{r}
-insample %<>%
-    mutate(default = default == "Defaulted")
+#insample %<>%
+ #   mutate(default = default == "Defaulted")
 
 log_fit <- glm(default ~ fico, data = insample, family = "binomial")
 log_fit %>% tidy %>% knitr::kable(digits = 2)
@@ -55,7 +59,124 @@ The intercept is strongly positive, which indicates that default is very likely 
 
 # Model Evaluation
 
+**(a)** We can estimate a probability of default via the formula from class 4:
+
+$$Pr(f) = \frac{\exp(\beta_0 -\beta_1 \times f)}{1 + \exp(\beta_0 - \beta_1 \times f)}$$
+
+Since our model only includes FICO scores, we can easily plot FICO vs estimated probability of default.
+
 ```{r}
-predict(log_fit, insample) %>% sort %>% plot
+prob_default <- function(fico) {
+    # empirically estimated beta's from above
+    b_0 = 7.68107
+    b_1 = -0.01341
+    x = exp(b_0 + (b_1 * fico))
+    x / (1 + x)
+}
+insample %>%
+    mutate(prob = prob_default(fico)) %>%
+    ggplot(aes(x = fico, y = prob)) + geom_line() +
+    ggtitle("Estimated probability of default") + 
+    xlab("FICO") + ylab("Estimated %") + 
+    theme_bw()
 ```
+
+Interestingly, we can compare this plot to the empirically determined default risk. We can see that the estimated curve fits very well, except for the outliers in high credit score. This might tell us that high credit score borrowers have asymmetric information about their ability to pay off loans, and they are the 'lemons' in this market.
+
+```{r}
+insample %>%
+    group_by(fico) %>%
+    summarize(empirical = 1- (mean(as.numeric(default)) - 1)) %>%
+    mutate(estimated = prob_default(fico)) %>%
+    gather(key = "est_type", value = "risk",
+           ... = empirical, estimated) %>% 
+    ggplot(aes(x = fico, y = risk, color = est_type)) + 
+    geom_point() + theme_bw() + 
+    theme(legend.position = "bottom") + 
+    xlab("FICO") + ylab("") + 
+    ggtitle("Empirical vs estimated default risk")
+```
+
+
+**(b)** Then, we can plot a corresponding ROC curve for this model:
+
+```{r, message=F, fig.width=5, fig.height=5}
+log_roc <- insample %>%
+    mutate(prob = prob_default(fico)) %>%
+    roc(default ~ prob, data = .) %>%
+    suppressMessages()
+
+log_roc %>% plot
+```
+
+**(c)** For this model, we have AUC of `r log_roc$auc`. This is better than 0.5. It's consistent with the findings in part 1b, where we found that FICO was a statistically significant predictor alone of default.
+
+**(d)** This is essentially using a 0.1 threshold on our probabilities of default. Then, we can create a confusion matrix:
+
+```{r}
+low_thresh_vals <- insample %>% 
+    select(fico) %>%
+    prob_default %>%
+    is_greater_than(0.1)
+
+confusion <- table(low_thresh_vals, insample$default)
+confusion %>% knitr::kable()
+```
+
+The proportion correctly rejected is `r confusion[1,1] / sum(confusion[,1])`. The proportion mistakenly rejected is `r 1 - (confusion[1,1] / sum(confusion[,1]))`. This is no bueno - our threshold is probably too low.
+
+# An out-of-sample analysis
+
+```{r}
+data_small <- insample[1:9000,]
+data_out <- insample[9001:10000,]
+
+# this is a bad idea...should randomly sample instead
+# set.seed(8)
+# data_small <- insample %>% sample_n(9000, replace= F)
+```
+
+**(a)** The new model, estimated on the first 9000 rows, is given by these summary statistics:
+
+```{r}
+small_fit <- glm(default ~ fico, data = data_small, family = "binomial")
+
+small_fit %>% tidy %>% knitr::kable(digits = 2)
+```
+
+**(b)** Then, we can predict probabilities for the remaining loans, and then create an ROC curve for both fits:
+
+```{r, message=F}
+prob_default_small <- function(fico) {
+    b_0 = 7.16430865
+    b_1 = -0.01268825
+    x = exp(b_0 + (b_1 * fico))
+    x / (1 + x)
+}
+plot(log_roc)
+data_out %>%
+    mutate(pred = prob_default_small(fico)) %>%
+    roc(default ~ pred, data = ., ) %>%
+    plot.roc(add = T)
+``` 
+
+**(c)** The area below the new ROC curve gets larger. We are no longer overfitting our dataset.
+
+**(d)** Vacuously, you don't want to use all variables available, because some of the variables are unique to a person or a loan- e.g. "id". These could perfectly estimate somebody's probability of default in the sample set but have no predictive use.
+
+[overfit...]
+
+Finally, we also may want parsimoniousness [...]
+
+**e** Let's consider verification status, grade, and revolving balance. We're going to do this on test-train split as well.
+
+```{r}
+fit_larger <- glm(default ~ fico + revol_util + grade + verification_status, data = data_out, family = "binomial")
+car::Anova(fit_larger)
+```
+
+
+
+
+
 
