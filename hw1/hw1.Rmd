@@ -1,12 +1,14 @@
 ---
 title: "Credit Modelling"
-author: 
-  - "Chris Hua"
-  - "Kevin Huo"
-  - "Arjun Jain"
-  - "Juan Manubens"
+author:
+- Chris Hua
+- Kevin Huo
+- Arjun Jain
+- Juan Manubens
 date: "11/7/2016"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -23,7 +25,7 @@ insample <- read.csv("File1_IS_data.csv")
 
 forgive me
 
-# Basic Modelling
+# 1: Basic Modelling
 
 We model "default probability" with respect to "FICO" score only. First, we note the distribution of the outcome variable:
 
@@ -57,7 +59,7 @@ By p-value, `fico` is a statistically significant value at better than at 0.01 l
 
 The intercept is strongly positive, which indicates that default is very likely for somebody with a `fico` score of 0. Alternatively, the intercept suggests that somebody with a score of 768 has 0 chance of default. The positive coefficient means that for each point of FICO score, the likelihood of a negative outcome decreases by 0.01. Each of these observations lines up with our intuitions.
 
-# Model Evaluation
+# 2: Model Evaluation
 
 **(a)** We can estimate a probability of default via the formula from class 4:
 
@@ -124,8 +126,7 @@ confusion %>% knitr::kable()
 ```
 
 The proportion correctly rejected is `r confusion[1,1] / sum(confusion[,1])`. The proportion mistakenly rejected is `r 1 - (confusion[1,1] / sum(confusion[,1]))`. This is no bueno - our threshold is probably too low.
-
-# An out-of-sample analysis
+# 3: An out-of-sample analysis
 
 ```{r}
 data_small <- insample[1:9000,]
@@ -195,27 +196,48 @@ fit_acc_temp %>%
     roc(default ~ pred, data = .)
 ```
 
-
-# A business decision to make
+# 4: A business decision to make
 
 ```{r}
 outsample <- read.csv("File2_OOS_predictor_data.csv")
-outsample_cc <- outsample[complete.cases(outsample), ] %>%
-    mutate(annual_inc = log(annual_inc))
 ```
 
-```{r rf}
-library(ranger)
-# we have pretty little data so we need ot 
-insample_cc <- insample[complete.cases(insample),] %>%
-    select(-id, -loan_status) %>%
-    mutate(annual_inc = log(annual_inc))
-rf <- ranger(default ~., data = insample_cc, num.trees = 500,
-             importance = "impurity")
-rf
-pred_rf <- predict(rf, data = outsample_cc)
-summary(pred_rf$predictions)
+```{r}
+# recode into numeric time length
+levels(outsample$emp_length) <- c("0.5", "1", "10", "2", "3", "4", "5", "6", "7", "8", "9")
+outsample$emp_length <- as.numeric(paste(outsample$emp_length))
+
+# get Pr(default | X)
+outsample$default_prob <- fit_larger2 %>% predict(newdata = outsample, type="response")
 ```
 
+Since we must pick 100 loans to finance, we need to construct a benchmark return on a low risk loan judging from the available options. 
+
+```{r}
+#(table(outsample$int_rate)) %>% cumsum %>% head
+```
+
+Our expected value is, for any given loan $i$,:
+
+$$EV_{i} = \frac{1 - (1+r_i)^{-n}}{r_i} \times \Pr(payoff \mid X_i) \times A_{i}$$
+
+Then, $\frac{1 - (1+r_i)^{-n}}{r_i}$ is a standard present value of annuity formula, where $r_i$ is the interest rate we charge and $n$ is the number of years that the loan will run. Finally, $\Pr(payoff \mid X_i)$ is the probability that the user will pay off the loan, given some characteristics $X_i$ at the user level, and $A_i$ is the amount of the loan. Note that the payoff probability comes from the model which we estimate in part 3.
+
+This is a reasonable function because we care about the interest to be earned over the life of the loan, the chance of default, and the total amount of the loan. This is simplified somewhat because we have both liquidity constraints and investment constraints - in the absence of investment constraints we would allocate some money to this risky loan portfolio but also to a risk-free or market portfolio, and in the absence of liquidity constraints we would back each loan with a positive expected value. We additionally assume that loans are either fully paid off or fully written off, which isn't a reasonable assumption in the real world, since we can usually expect to recoup some of the value of a failed loan.
+
+```{r}
+portfolio <- outsample %>%
+    filter(emp_length > 0) %>%
+    mutate(int_multiple = ( (1 - (int_rate / 100) + 1)^-emp_length) / int_rate) %>%
+    mutate(e_return = default_prob * int_multiple * loan_amnt) %>%
+    select(id, e_return, loan_amnt, default_prob, int_multiple) %>%
+    arrange(-e_return) %>%
+    head(100)
+
+csv_out <- outsample %>%
+    transmute(id = id, picked = id %in% portfolio$id)
+```
+
+On these 100 loans, we expect a `r (sum(portfolio$loan_amnt) + sum(portfolio$e_return)) / sum(portfolio$loan_amnt) - 1` return. That sucks.
 
 
