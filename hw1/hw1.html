@@ -258,8 +258,29 @@ Defaulted      Paid
 <p><strong>(c)</strong> The area below the new ROC curve gets larger. We are no longer overfitting our dataset.</p>
 <p><strong>(d)</strong> Vacuously, you don’t want to use all variables available, because some of the variables are unique to a person or a loan- e.g. “id”. These could perfectly estimate somebody’s probability of default in the sample set but have no predictive use.</p>
 <p>[overfit…]</p>
-<p><strong>e</strong></p>
 <p>Finally, we also may want parsimoniousness […]</p>
+<p><strong>e</strong> Let’s consider interest rate, loan length, and annual income. We’re going to do this on test-train split as well.</p>
+<p>We fit the model and show the Anova table (type II tests):</p>
+<pre><code>## Analysis of Deviance Table (Type II tests)
+## 
+## Response: default
+##            LR Chisq Df Pr(&gt;Chisq)   
+## fico         5.8760  1    0.01535 * 
+## int_rate     7.8866  1    0.00498 **
+## emp_length   7.2645 10    0.70026   
+## annual_inc   9.2386  1    0.00237 **
+## ---
+## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1</code></pre>
+<p>Within this model, each variable is significant at the 0.05 level except the length of the loan. We can kick out that variable to create a more parsimonious, 3 variable, model.</p>
+<pre><code>## Analysis of Deviance Table (Type II tests)
+## 
+## Response: default
+##            LR Chisq Df Pr(&gt;Chisq)    
+## fico         7.1142  1  0.0076476 ** 
+## int_rate     8.2443  1  0.0040880 ** 
+## annual_inc  11.1725  1  0.0008302 ***
+## ---
+## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1</code></pre>
 </div>
 
 

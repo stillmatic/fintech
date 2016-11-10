@@ -168,15 +168,54 @@ data_out %>%
 
 Finally, we also may want parsimoniousness [...]
 
-**e** Let's consider verification status, grade, and revolving balance. We're going to do this on test-train split as well.
+**e** Let's consider interest rate, loan length, and annual income. We're going to do this on test-train split as well.
+
+We fit the model and show the Anova table (type II tests):
 
 ```{r}
-fit_larger <- glm(default ~ fico + revol_util + grade + verification_status, data = data_out, family = "binomial")
+fit_larger <- glm(default ~ fico + int_rate + emp_length + annual_inc, data = data_out, family = "binomial")
 car::Anova(fit_larger)
 ```
 
+Within this model, each variable is significant at the 0.05 level except the length of the loan. We can kick out that variable to create a more parsimonious, 3 variable, model.
+
+```{r}
+fit_larger2 <- glm(default ~ fico + int_rate + annual_inc, data = data_out, family = "binomial")
+car::Anova(fit_larger2)
+```
+
+We can test the accuracy of this model
+
+```{r}
+fit_acc_temp <- fit_larger2 %>% 
+    predict(data = data_out, type = "response") %>%
+    cbind(data_out)
+names(fit_acc_temp)[1] <- "pred"
+fit_acc_temp %>%
+    roc(default ~ pred, data = .)
+```
 
 
+# A business decision to make
+
+```{r}
+outsample <- read.csv("File2_OOS_predictor_data.csv")
+outsample_cc <- outsample[complete.cases(outsample), ] %>%
+    mutate(annual_inc = log(annual_inc))
+```
+
+```{r rf}
+library(ranger)
+# we have pretty little data so we need ot 
+insample_cc <- insample[complete.cases(insample),] %>%
+    select(-id, -loan_status) %>%
+    mutate(annual_inc = log(annual_inc))
+rf <- ranger(default ~., data = insample_cc, num.trees = 500,
+             importance = "impurity")
+rf
+pred_rf <- predict(rf, data = outsample_cc)
+summary(pred_rf$predictions)
+```
 
 
 
