@@ -2,9 +2,6 @@
 title: "Credit Modelling"
 author:
 - Chris Hua
-- Kevin Huo
-- Arjun Jain
-- Juan Manubens
 date: "11/7/2016"
 output:
   pdf_document: default
@@ -23,11 +20,9 @@ library(tidyr)
 insample <- read.csv("File1_IS_data.csv")
 ```
 
-forgive me
+# 0: Data Exploration
 
-# 1: Basic Modelling
-
-We model "default probability" with respect to "FICO" score only. First, we note the distribution of the outcome variable:
+First, we note the distribution of the outcome variable:
 
 ```{r, comment=""}
 insample %>% 
@@ -43,13 +38,17 @@ insample %>%
     ggtitle("") + xlab("FICO Score")
 ```
 
+# 1: Basic Modelling
+
+We model "default probability" with respect to "FICO" score only. Here, a positive outcome denotes that the user defaulted, and a negative outcome denotes that the user did not default. Note that we have to relabel the factor levels for this to work by default.
+
 **a.** We expect a negative coefficient on FICO. Intuitively, a customer is less likely to default the better their credit score is. We would also expect a positive intercept, because for a customer with 0 credit score (the condition for the intercept), they have terrible chances of paying off the bill, and thus high chance for default.
 
-**b.** We estimate our model using `glm` approach with a binomial prior. Summary statistics:
+**b.** We estimate our model using a generalized linear model (`glm`) approach, with a binomial prior. Summary statistics of the model follow:
 
 ```{r}
-#insample %<>%
- #   mutate(default = default == "Defaulted")
+insample %<>%
+   mutate(default = default == "Defaulted")
 
 log_fit <- glm(default ~ fico, data = insample, family = "binomial")
 log_fit %>% tidy %>% knitr::kable(digits = 2)
@@ -57,7 +56,7 @@ log_fit %>% tidy %>% knitr::kable(digits = 2)
 
 By p-value, `fico` is a statistically significant value at better than at 0.01 level, indicating that by itself, `fico` is a useful predictor for default outcomes.
 
-The intercept is strongly positive, which indicates that default is very likely for somebody with a `fico` score of 0. Alternatively, the intercept suggests that somebody with a score of 768 has 0 chance of default. The positive coefficient means that for each point of FICO score, the likelihood of a negative outcome decreases by 0.01. Each of these observations lines up with our intuitions.
+The intercept is strongly positive, which indicates that default is very likely for somebody with a `fico` score of 0. Alternatively, the intercept suggests that somebody with a score of 768 has 0 chance of default. The negative coefficient means that for each point of FICO score, the likelihood of default decreases by 0.01. Each of these observations lines up with our intuitions.
 
 # 2: Model Evaluation
 
@@ -68,15 +67,17 @@ $$Pr(f) = \frac{\exp(\beta_0 -\beta_1 \times f)}{1 + \exp(\beta_0 - \beta_1 \tim
 Since our model only includes FICO scores, we can easily plot FICO vs estimated probability of default.
 
 ```{r}
-prob_default <- function(fico) {
-    # empirically estimated beta's from above
-    b_0 = 7.68107
-    b_1 = -0.01341
-    x = exp(b_0 + (b_1 * fico))
+# predict in base R does not play nice with pipes
+log_odds <- function(model, val) {
+    betas <- model %>% tidy %$% estimate
+    b_0 <- betas[1]
+    b_1 <- betas[2]
+    x = exp(b_0 + (b_1 * val))
     x / (1 + x)
 }
+
 insample %>%
-    mutate(prob = prob_default(fico)) %>%
+    mutate(prob = log_odds(log_fit, fico)) %>%
     ggplot(aes(x = fico, y = prob)) + geom_line() +
     ggtitle("Estimated probability of default") + 
     xlab("FICO") + ylab("Estimated %") + 
@@ -88,8 +89,8 @@ Interestingly, we can compare this plot to the empirically determined default ri
 ```{r}
 insample %>%
     group_by(fico) %>%
-    summarize(empirical = 1- (mean(as.numeric(default)) - 1)) %>%
-    mutate(estimated = prob_default(fico)) %>%
+    summarize(empirical = (mean(as.numeric(default)))) %>%
+    mutate(estimated = log_odds(log_fit, fico)) %>%
     gather(key = "est_type", value = "risk",
            ... = empirical, estimated) %>% 
     ggplot(aes(x = fico, y = risk, color = est_type)) + 
@@ -104,29 +105,33 @@ insample %>%
 
 ```{r, message=F, fig.width=5, fig.height=5}
 log_roc <- insample %>%
-    mutate(prob = prob_default(fico)) %>%
+    mutate(prob = log_odds(log_fit, fico)) %>%
     roc(default ~ prob, data = .) %>%
     suppressMessages()
 
-log_roc %>% plot
+plot_log_roc <- log_roc %>% plot
+plot_log_roc
 ```
 
-**(c)** For this model, we have AUC of `r log_roc$auc`. This is better than 0.5. It's consistent with the findings in part 1b, where we found that FICO was a statistically significant predictor alone of default.
+**(c)** For this model, we have AUC of `r round(log_roc$auc, 3)`. This is better than 0.5. It's consistent with the findings in part 1b, where we found that FICO was a statistically significant predictor alone of default.
 
 **(d)** This is essentially using a 0.1 threshold on our probabilities of default. Then, we can create a confusion matrix:
 
 ```{r}
 low_thresh_vals <- insample %>% 
     select(fico) %>%
-    prob_default %>%
+    log_odds(log_fit, .) %>%
     is_greater_than(0.1)
 
 confusion <- table(low_thresh_vals, insample$default)
 confusion %>% knitr::kable()
 ```
 
-The proportion correctly rejected is `r confusion[1,1] / sum(confusion[,1])`. The proportion mistakenly rejected is `r 1 - (confusion[1,1] / sum(confusion[,1]))`. This is no bueno - our threshold is probably too low.
+The proportion correctly rejected is `r round(confusion[1,1] / sum(confusion[,1]), 3)`. The proportion mistakenly rejected is `r round(1 - (confusion[1,1] / sum(confusion[,1])), 3)`. Whether this is acceptable or not is dependent on the cost of a false positive vs false negative for the lender.
+
 # 3: An out-of-sample analysis
+
+Note that we use the first 9000 rows as training and last 1000 rows as test - in protest. It would be much more theoretically legitimate to randomly sample the rows to use.
 
 ```{r}
 data_small <- insample[1:9000,]
@@ -145,56 +150,67 @@ small_fit <- glm(default ~ fico, data = data_small, family = "binomial")
 small_fit %>% tidy %>% knitr::kable(digits = 2)
 ```
 
+This is pretty similar to the model that we estimated on the full 1000 data points, but has a less negative intercept.
+
 **(b)** Then, we can predict probabilities for the remaining loans, and then create an ROC curve for both fits:
 
 ```{r, message=F}
-prob_default_small <- function(fico) {
-    b_0 = 7.16430865
-    b_1 = -0.01268825
-    x = exp(b_0 + (b_1 * fico))
-    x / (1 + x)
-}
 plot(log_roc)
 data_out %>%
-    mutate(pred = prob_default_small(fico)) %>%
+    mutate(pred = log_odds(small_fit, fico)) %>%
     roc(default ~ pred, data = ., ) %>%
     plot.roc(add = T)
 ``` 
 
-**(c)** The area below the new ROC curve gets larger. We are no longer overfitting our dataset.
+**(c)** The area below the new ROC curve gets larger. My inclination is that we are no longer overfitting our dataset.
 
 **(d)** Vacuously, you don't want to use all variables available, because some of the variables are unique to a person or a loan- e.g. "id". These could perfectly estimate somebody's probability of default in the sample set but have no predictive use.
 
-[overfit...]
+If we fit every variable into the logistic model, we run the chance of overfitting. This is where we find some spurious behavior in the training data, that isn't representative of the underlying data, but rather an artifact of the existing data points.
 
-Finally, we also may want parsimoniousness [...]
+Finally, we also may want parsimoniousness in our model, which is having fewer variables and being able to explain the data with these fewer variables. It is harder to explain a 10 variable model than a 3 variable model.
 
 **e** Let's consider interest rate, loan length, and annual income. We're going to do this on test-train split as well.
 
 We fit the model and show the Anova table (type II tests):
 
 ```{r}
+data_out %<>%
+    mutate(annual_inc = annual_inc / 1000)
 fit_larger <- glm(default ~ fico + int_rate + emp_length + annual_inc, data = data_out, family = "binomial")
 car::Anova(fit_larger)
 ```
 
-Within this model, each variable is significant at the 0.05 level except the length of the loan. We can kick out that variable to create a more parsimonious, 3 variable, model.
+Within this model, each variable is significant at the 0.05 level except the length of the loan. We can kick out that variable to create a more parsimonious, 3 variable, model. We will use this as our final model.
 
 ```{r}
 fit_larger2 <- glm(default ~ fico + int_rate + annual_inc, data = data_out, family = "binomial")
 car::Anova(fit_larger2)
 ```
 
-We can test the accuracy of this model
-
 ```{r}
 fit_acc_temp <- fit_larger2 %>% 
     predict(data = data_out, type = "response") %>%
     cbind(data_out)
 names(fit_acc_temp)[1] <- "pred"
-fit_acc_temp %>%
-    roc(default ~ pred, data = .)
 ```
+
+We can test the accuracy of this model in a similar way as before. We add the plot of the new model's ROC curve to the existing model's ROC curve plot, and compare them. The new curve is chunkier because it is comparing 1000 points vs 9000. However, we see that this is a better fit, with ROC of `r fit_acc_temp %>% roc(default ~ pred, data = .) %>% as.list %>% magrittr::extract("auc")`
+
+```{r}
+data_out %>%
+    mutate(pred = log_odds(small_fit, fico)) %>%
+    roc(default ~ pred, data = ., ) %>% plot
+fit_acc_temp %>%
+    roc(default ~ pred, data = .) %>% plot(add = T)
+```
+
+Thus, our final model is given by these summary statistics. Each variable is significant, and each has a clear interpretation.
+
+```{r}
+fit_larger2 %>% tidy %>% knitr::kable(digits = 4)
+```
+
 
 # 4: A business decision to make
 
@@ -209,12 +225,6 @@ outsample$emp_length <- as.numeric(paste(outsample$emp_length))
 
 # get Pr(default | X)
 outsample$default_prob <- fit_larger2 %>% predict(newdata = outsample, type="response")
-```
-
-Since we must pick 100 loans to finance, we need to construct a benchmark return on a low risk loan judging from the available options. 
-
-```{r}
-#(table(outsample$int_rate)) %>% cumsum %>% head
 ```
 
 Our expected value is, for any given loan $i$,:
@@ -236,6 +246,8 @@ portfolio <- outsample %>%
 
 csv_out <- outsample %>%
     transmute(id = id, picked = id %in% portfolio$id)
+
+csv_out %>% write.csv(file = "applicant_portfolio.csv")
 ```
 
 On these 100 loans, we expect a `r (sum(portfolio$loan_amnt) + sum(portfolio$e_return)) / sum(portfolio$loan_amnt) - 1` return. That sucks.
