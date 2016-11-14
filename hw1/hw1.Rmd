@@ -170,7 +170,7 @@ If we fit every variable into the logistic model, we run the chance of overfitti
 
 Finally, we also may want parsimoniousness in our model, which is having fewer variables and being able to explain the data with these fewer variables. It is harder to explain a 10 variable model than a 3 variable model.
 
-**e** Let's consider interest rate, loan length, and annual income. We're going to do this on test-train split as well.
+**e** Let's consider interest rate, employment length, and annual income. We're going to do this on test-train split as well. We make one adjustment to the data - we divide annual income by 1000. Ordinary least squares regression is scale-invariant 
 
 We fit the model and show the Anova table (type II tests):
 
@@ -181,7 +181,7 @@ fit_larger <- glm(default ~ fico + int_rate + emp_length + annual_inc, data = da
 car::Anova(fit_larger)
 ```
 
-Within this model, each variable is significant at the 0.05 level except the length of the loan. We can kick out that variable to create a more parsimonious, 3 variable, model. We will use this as our final model.
+Within this model, each variable is significant at the 0.05 level except the length of employment. We can kick out that variable to create a more parsimonious, 3 variable, model. We will use this as our final model.
 
 ```{r}
 fit_larger2 <- glm(default ~ fico + int_rate + annual_inc, data = data_out, family = "binomial")
@@ -219,26 +219,22 @@ outsample <- read.csv("File2_OOS_predictor_data.csv")
 ```
 
 ```{r}
-# recode into numeric time length
-levels(outsample$emp_length) <- c("0.5", "1", "10", "2", "3", "4", "5", "6", "7", "8", "9")
-outsample$emp_length <- as.numeric(paste(outsample$emp_length))
-
 # get Pr(default | X)
-outsample$default_prob <- fit_larger2 %>% predict(newdata = outsample, type="response")
+outsample %<>% mutate(annual_inc = annual_inc / 1000)
+outsample$default_prob <-  fit_larger2 %>% predict(newdata = outsample, type="response")
 ```
 
 Our expected value is, for any given loan $i$,:
 
 $$EV_{i} = \frac{1 - (1+r_i)^{-n}}{r_i} \times \Pr(payoff \mid X_i) \times A_{i}$$
 
-Then, $\frac{1 - (1+r_i)^{-n}}{r_i}$ is a standard present value of annuity formula, where $r_i$ is the interest rate we charge and $n$ is the number of years that the loan will run. Finally, $\Pr(payoff \mid X_i)$ is the probability that the user will pay off the loan, given some characteristics $X_i$ at the user level, and $A_i$ is the amount of the loan. Note that the payoff probability comes from the model which we estimate in part 3.
+Then, $\frac{1 - (1+r_i)^{-n}}{r_i}$ is a standard present value of annuity formula, where $r_i$ is the interest rate we charge and $n$ is the number of years that the loan will run. Finally, $\Pr(payoff \mid X_i)$ is the probability that the user will pay off the loan, given some characteristics $X_i$ at the user level, and $A_i$ is the amount of the loan. Note that the payoff probability comes from the model which we estimate in part 3. Additionally, note that we assume $n=5$ for Lending Club loans.
 
 This is a reasonable function because we care about the interest to be earned over the life of the loan, the chance of default, and the total amount of the loan. This is simplified somewhat because we have both liquidity constraints and investment constraints - in the absence of investment constraints we would allocate some money to this risky loan portfolio but also to a risk-free or market portfolio, and in the absence of liquidity constraints we would back each loan with a positive expected value. We additionally assume that loans are either fully paid off or fully written off, which isn't a reasonable assumption in the real world, since we can usually expect to recoup some of the value of a failed loan.
 
 ```{r}
 portfolio <- outsample %>%
-    filter(emp_length > 0) %>%
-    mutate(int_multiple = ( (1 - (int_rate / 100) + 1)^-emp_length) / int_rate) %>%
+    mutate(int_multiple = ( (1 - (int_rate / 100))^-5) / int_rate) %>%
     mutate(e_return = default_prob * int_multiple * loan_amnt) %>%
     select(id, e_return, loan_amnt, default_prob, int_multiple) %>%
     arrange(-e_return) %>%
@@ -250,6 +246,6 @@ csv_out <- outsample %>%
 csv_out %>% write.csv(file = "applicant_portfolio.csv")
 ```
 
-On these 100 loans, we expect a `r (sum(portfolio$loan_amnt) + sum(portfolio$e_return)) / sum(portfolio$loan_amnt) - 1` return. That sucks.
+On these 100 loans, we expect a `r round((sum(portfolio$loan_amnt) + sum(portfolio$e_return)) / sum(portfolio$loan_amnt) - 1, 2)*100`% return.
 
-
+One improvement we could make to our model is to add a prior distribution on when loans are likely to default. We might expect the curve to be concave down, increasing then decreasing. This can give us a better idea of when the loans are likely to default, and then give us a better idea of how much we can actually earn from them. But: we don't have any data about that, and since our goal is to rank rather than predict the actual value, we should be fine wits this model.
