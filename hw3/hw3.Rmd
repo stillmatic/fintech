@@ -8,7 +8,7 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(echo = TRUE)
 dd_1970 <- read.csv("Data_Daily_1970.csv")
 library(dplyr)
 library(magrittr)
@@ -37,6 +37,7 @@ lm_fit %>%
 ```
 
 The R-squared value is about 0.36, and the p-value is rounded to 0. This is pretty good!
+
 
 ## Part 2: A Lasso regression
 
