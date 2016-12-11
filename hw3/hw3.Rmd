@@ -36,12 +36,13 @@ lm_fit %>%
     knitr::kable(digits = 4)
 ```
 
-The R-squared value is about 0.36, and the p-value is rounded to 0. This is pretty good!
+The R-squared value is about 0.36, and the p-value is rounded to 0. This is pretty good! 
 
+I would want to know more than just the R-Squared and the p-value before jumping into a trading strategy on this model, for example, checking the regression assumptions, and reducing the number of factors we use in order to avoid overfitting the data.
 
 ## Part 2: A Lasso regression
 
-Lasso is a regularization scheme, using the $L_1$ norm to 'choose' useful predictors for regression. We perform cross-validation to determine the optimal Lasso $\lambda$ penalization coefficient.
+Lasso is a regularization scheme, using the $L_1$ norm to 'choose' useful predictors for regression. We perform cross-validation to determine the optimal Lasso $\lambda$ penalization coefficient. This next graph shows the mean cross-validation error as a function of the $\lambda$ regularization penalty.
 
 ```{r}
 lag_mat <- dd_1970 %>%
@@ -67,25 +68,30 @@ The optimal Lasso $\lambda$ is at `r round(glm_fit$lambda.min, 2)`. Using this l
 
 ```{r, echo = F}
 # glm
-coef_glm <- as.matrix(coef(glm_fit, s = "lambda.min")) %>% unlist
+coef_glm <- as.matrix(coef(glm_fit, s = "lambda.min")) %>% 
+  unlist
 rn <- rownames(coef_glm)
-coef_glm %<>% as.data.frame %>%
-    mutate(type = "glm", bx = rn)
+coef_glm %<>% 
+  as.data.frame %>%
+  mutate(type = "LASSO", bx = rn)
 names(coef_glm) <- c("val", "type", "bx")
 # lm
 coef_lm <- coef(lm_fit) %>% unlist
 coef_lm %<>% 
-    as.data.frame %>%
-    mutate(type = "lm", bx = rn)
+  as.data.frame %>%
+  mutate(type = "OLS", bx = rn)
 names(coef_lm) <- c("val", "type", "bx")
+# remove intercept
+coef_glm %<>% extract(-1, )
+coef_lm %<>% extract(-1, )
 # combine
 coef_mat <- rbind(coef_glm, coef_lm) %>% as.data.frame()
 coef_mat %>% 
-    ggplot(aes(x = val, fill = type)) +
-    geom_histogram(bins = 50) + facet_wrap(~type) +
-    theme(legend.position = "none") + 
-    ggtitle("Distribution of regression coefficients") +
-    xlab("Coefficient value") + ylab("Count")
+  ggplot(aes(x = val)) +
+  geom_histogram(bins = 50) + facet_wrap(~type) +
+  theme(legend.position = "none") + 
+  ggtitle("Distribution of regression coefficients") +
+  xlab("Coefficient value") + ylab("Count")
 ```
 
 We notice that most of the coefficients under LASSO are centered at 0. This is because the L1-regularization draws coefficients to 0, and forces some coefficients to be 0 to create a more parsimonious model. 
@@ -99,9 +105,13 @@ dd_1971 <- read.csv("Data_Daily_1971.csv")
 lag_1971 <- dd_1971 %>% mutate(mkt_excess = lead(mkt_excess, 1))
 ```
 
+We can determine if a day will be positive or not via the `predict` function. Then we will decide to go long or short depending on if that prediction is positive or negative. 
+
+We do a bit of clever (or hacky) math here. If we think a day is positive, then we go long, and our return is the same as the market's return. If we think a day is negative, then we go short, and our return is $-1 \times R$. Then, we can represent our returns as $sign(\hat R_i) \times R_i$, where $sign$ is the sign of our prediction for some day $i$, and $R_i$ is the actual return.
+
 ```{r}
 pred_lm <- predict(lm_fit, lag_1971)
-long_lm <- (pred_lm > 0) * 2 - 1 
+long_lm <- (pred_lm > 0) * 2 - 1  # hacky, I know
 returns_lm <- lag_1971$mkt_excess * long_lm
 returns_lm <- returns_lm[complete.cases(returns_lm)]
 daily_lm <- cumprod(1+returns_lm)
@@ -113,8 +123,9 @@ We guess the correct direction on `r round(mean(returns_lm > 0), 4) * 100`\% of 
 
 ```{r}
 coef_glm2 <- as.matrix(coef(glm_fit, s="lambda.min")) %>% as.vector
-mat_glm <- as.matrix(select(lag_1971, -Date))
-pred_glm <- coef_glm2 %*% t(mat_glm) # yolo
+mat_glm <- as.matrix(select(lag_1971, -Date, -mkt_excess))
+pred_glm <- predict(glm_fit, newx = data.matrix(mat_glm), s = "lambda.min", type = "response")
+
 long_glm <- (pred_glm > 0) * 2 -1
 returns_glm <- lag_1971$mkt_excess * long_glm
 returns_glm <- returns_glm[-which(is.na(returns_glm))]
